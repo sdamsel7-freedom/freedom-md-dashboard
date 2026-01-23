@@ -5,3 +5,4 @@ openpyxl
 xlsxwriter
 pytrends
 matplotlib
+pytrends==4.9.2
