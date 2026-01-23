@@ -101,12 +101,6 @@ st.markdown("""
 st.title("📸 Musinsa Visual Market Analyzer")
 
 # 2. 공통 설정
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json",
-    "Referer": "https://www.musinsa.com/",
-    "Content-Type": "application/json"
-}
 GENDER_MAP = {"전체": "A", "남성": "M", "여성": "F"}
 
 BASE_SORT_OPTIONS = {
@@ -128,30 +122,39 @@ def format_number(num):
     else:
         return f"{num:,}"
 
-# [함수 2] 좋아요 API 별도 호출 (핵심 추가!)
+# [함수 2] 좋아요 API 호출 (강력한 헤더 적용)
 def get_like_counts_batch(goods_ids):
-    """
-    상품 ID 리스트를 받아 좋아요 수를 한 번에 조회하는 함수
-    """
     if not goods_ids: return {}
     
     url = "https://like.musinsa.com/like/api/v2/liketypes/goods/counts"
     
-    # 무신사 좋아요 API는 ID를 문자열 리스트로 받습니다.
+    # [핵심] 봇 차단 회피를 위한 헤더 설정
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Origin": "https://www.musinsa.com",
+        "Referer": "https://www.musinsa.com/"
+    }
+    
     payload = {"relationIds": [str(gid) for gid in goods_ids]}
     
     try:
-        resp = requests.post(url, headers=HEADERS, json=payload)
+        resp = requests.post(url, headers=headers, json=payload, timeout=5)
+        
+        # 응답 상태 확인 (디버깅용)
+        if resp.status_code != 200:
+            # st.sidebar.error(f"좋아요 API 차단됨: {resp.status_code}") # 디버깅 필요시 주석 해제
+            return {}
+            
         data = resp.json()
         
-        # 결과 매핑: {'상품ID': 좋아요수, ...}
         like_map = {}
         if "data" in data and "contents" in data["data"]:
             for item in data["data"]["contents"]:
                 like_map[str(item["relationId"])] = item["count"]
         return like_map
     except Exception as e:
-        # st.error(f"좋아요 조회 실패: {e}") # 디버깅용
         return {}
 
 # 3. 사이드바
@@ -183,20 +186,27 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
         category_param = ""
         scope_name = "전체 상품"
     
+    # [일반 API 헤더]
+    SEARCH_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Referer": "https://www.musinsa.com/"
+    }
+
     url = f"https://api.musinsa.com/api2/dp/v1/plp/goods?gf={GENDER_MAP[gender]}&keyword={encoded_kw}&sortCode={s_code}{category_param}&size={num_products}&caller=SEARCH&page=1"
     
     try:
-        resp = requests.get(url, headers=HEADERS)
+        resp = requests.get(url, headers=SEARCH_HEADERS)
         products = resp.json().get("data", {}).get("list", [])
     except Exception as e:
         st.error(f"API 호출 중 오류 발생: {e}")
         products = []
     
     if products:
-        # [핵심 로직 추가] 1. 상품 ID만 싹 뽑아냅니다.
+        # [단계 1] 상품 ID 추출
         goods_ids = [p['goodsNo'] for p in products]
         
-        # [핵심 로직 추가] 2. 좋아요 API를 따로 호출해서 맵을 만듭니다.
+        # [단계 2] 좋아요 정보 가져오기
         like_map = get_like_counts_batch(goods_ids)
         
         wb = openpyxl.Workbook()
@@ -215,14 +225,12 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
                 if i + j < len(products):
                     item = products[i + j]
                     
-                    # 기본 정보
                     brand = item.get("brandKorName") or item.get("brandName", "")
                     name = item.get("goodsName", "")
                     normal = item.get("normalPrice", 0)
                     sale = item.get("price", 0)
-                    goods_id = str(item.get("goodsNo")) # ID 추출
+                    goods_id = str(item.get("goodsNo"))
                     
-                    # 할인율
                     if item.get("couponSaleRate"):
                         rate = item.get("couponSaleRate")
                     elif normal > sale:
@@ -233,12 +241,11 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
                     img_url = item.get("thumbnail")
                     reviews = item.get("reviewCount", 0)
                     
-                    # [중요] 아까 만든 맵에서 좋아요 수 찾기 (없으면 0)
+                    # [단계 3] 맵에서 좋아요 수 매칭
                     likes = like_map.get(goods_id, 0)
                     
                     rank = i + j + 1
                     
-                    # 포맷팅
                     reviews_fmt = format_number(reviews)
                     likes_fmt = format_number(likes)
                     
