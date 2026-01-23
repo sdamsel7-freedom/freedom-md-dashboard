@@ -130,7 +130,7 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
     try:
         resp = requests.get(url, headers=HEADERS)
         products = resp.json().get("data", {}).get("list", [])
-    except Exception as e:  # [수정됨] 띄어쓰기 오타 수정 완료!
+    except Exception as e:
         st.error(f"API 호출 중 오류 발생: {e}")
         products = []
     
@@ -166,37 +166,35 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
                     reviews = item.get("reviewCount", 0)
                     rank = i + j + 1
                     
-                    # 가격 표시 HTML 생성
+                    # [가격 HTML 생성] - 공백 제거 (한 줄로 작성)
                     if normal > sale:
-                        price_html = f"""
-                            <div style="display:flex; flex-direction:column; line-height:1.2;">
-                                <span style="font-size:11px; color:#aaa; text-decoration:line-through;">{normal:,}원</span>
-                                <span>{sale:,}원</span>
-                            </div>
-                        """
+                        price_html = f"""<div style="display:flex; flex-direction:column; line-height:1.2;"><span style="font-size:11px; color:#aaa; text-decoration:line-through;">{normal:,}원</span><span>{sale:,}원</span></div>"""
                         rate_html = f'<span style="color:#ff0000; font-size:12px;">{rate}%</span>'
                     else:
                         price_html = f"<span>{sale:,}원</span>"
                         rate_html = "" 
 
                     with cols[j]:
-                        st.markdown(f"""
-                            <div class="full-card">
-                                <div class="card-image-box">
-                                    <img src="{img_url}">
-                                </div>
-                                <div class="card-text-box">
-                                    <div class="goods-name"><b>{rank}.</b> {name}</div>
-                                    <div class="brand-name">{brand}</div>
-                                    <div class="price-row">
-                                        {price_html}
-                                        {rate_html}
-                                    </div>
-                                    <div class="review-row">⭐ {reviews:,}</div>
-                                </div>
-                            </div>
-                        """, unsafe_allow_html=True)
+                        # [핵심] HTML 코드 들여쓰기 제거
+                        card_html = f"""
+<div class="full-card">
+<div class="card-image-box">
+<img src="{img_url}">
+</div>
+<div class="card-text-box">
+<div class="goods-name"><b>{rank}.</b> {name}</div>
+<div class="brand-name">{brand}</div>
+<div class="price-row">
+{price_html}
+{rate_html}
+</div>
+<div class="review-row">⭐ {reviews:,}</div>
+</div>
+</div>
+"""
+                        st.markdown(card_html, unsafe_allow_html=True)
 
+                    # 엑셀 저장
                     row_idx = i + j + 2
                     ws.append([rank, gender, brand, name, normal, sale, rate, reviews])
                     ws.row_dimensions[row_idx].height = 90
