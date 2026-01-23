@@ -20,7 +20,7 @@ st.markdown("""
         overflow: hidden;
         background-color: white;
         margin-bottom: 10px;
-        height: 320px;
+        height: 340px; /* 좋아요 행 추가로 높이 약간 증가 */
         display: flex;
         flex-direction: column;
         transition: transform 0.2s;
@@ -74,7 +74,7 @@ st.markdown("""
         color: #888;
         white-space: nowrap;
         text-overflow: ellipsis;
-        margin-bottom: 6px;
+        margin-bottom: 4px;
     }
     
     .price-row {
@@ -84,13 +84,18 @@ st.markdown("""
         display: flex;
         align-items: flex-end;
         justify-content: space-between;
+        margin-bottom: 4px;
     }
     
-    .review-row {
+    /* [수정] 좋아요 및 리뷰 스타일 */
+    .meta-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         font-size: 11px;
-        color: #999;
-        margin-top: 4px;
+        color: #777;
     }
+    .heart-icon { color: #ff3333; font-weight: bold; margin-right: 2px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -101,52 +106,53 @@ HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer":
 GENDER_MAP = {"전체": "A", "남성": "M", "여성": "F"}
 
 BASE_SORT_OPTIONS = {
-    "무신사 추천순": ("POPULAR", "추천순"),
-    "후기순(리뷰순)": ("REVIEW", "리뷰순"),
-    "판매금액순(1개월)": ("SALE_ONE_MONTH_AMOUNT", "매출1개월"),
-    "판매수량순(1개월)": ("SALE_ONE_MONTH_COUNT", "판매1개월"),
-    "판매금액순(3개월)": ("SALE_THREE_MONTH_AMOUNT", "매출3개월"),
-    "판매수량순(3개월)": ("SALE_THREE_MONTH_COUNT", "판매3개월"),
-    "판매금액순(1년)": ("SALE_ONE_YEAR_AMOUNT", "매출1년"),
-    "판매수량순(1년)": ("SALE_ONE_YEAR_COUNT", "판매1년"),
-    "신상품순": ("NEW", "신상순"),
-    "할인율순": ("DISCOUNT_RATE", "할인순"),
+    "무신사 추천순 (POPULAR)": ("POPULAR", "추천순"),
+    "판매수량순 (1개월)": ("SALE_ONE_MONTH_COUNT", "판매1개월"),
+    "판매금액순 (1개월)": ("SALE_ONE_MONTH_AMOUNT", "매출1개월"),
+    "후기순 (REVIEW)": ("REVIEW", "리뷰순"),
+    "신상품순 (NEW)": ("NEW", "신상순"),
+    "할인율순 (DISCOUNT)": ("DISCOUNT_RATE", "할인순"),
 }
+
+# [함수] 숫자 포맷팅 (예: 12500 -> 1.2만)
+def format_number(num):
+    if num >= 10000:
+        return f"{num/10000:.1f}만"
+    elif num >= 1000:
+        return f"{num/1000:.1f}천"
+    else:
+        return f"{num:,}"
 
 # 3. 사이드바
 with st.sidebar:
     st.header("⚙️ 검색 설정")
     
-    # [새로운 기능] 검색 영역 선택 (전체 vs 플레이어)
     search_scope = st.radio(
-        "검색 영역 선택", 
-        ["전체 상품 (All)", "무신사 플레이어 (스포츠/017)"],
+        "검색 범위 선택", 
+        ["전체 상품 검색", "무신사 플레이어 (스포츠/017)"],
         index=0
     )
     
     st.divider()
     
-    gender = st.radio("성별", list(GENDER_MAP.keys()))
+    keyword = st.text_input("검색어 (Keyword)", "원피스")
+    gender = st.radio("성별 (Target Gender)", list(GENDER_MAP.keys()), index=2) # 기본값: 여성
     sort_label = st.selectbox("정렬 기준", list(BASE_SORT_OPTIONS.keys()))
-    keyword = st.text_input("검색어", "짐웨어")
     num_products = st.slider("수집 개수", 10, 100, 50)
 
 # 4. 분석 로직
-if st.button(f"🚀 {gender} 데이터 분석 시작"):
+if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
     encoded_kw = requests.utils.quote(keyword)
     s_code, s_short = BASE_SORT_OPTIONS[sort_label]
     
-    # [핵심 로직] 선택된 영역에 따라 URL 파라미터 변경
     if "플레이어" in search_scope:
-        # 무신사 플레이어(017) 카테고리 고정
         category_param = "&category=017"
-        caller_param = "CATEGORY" # 카테고리 내 검색처럼 동작
+        scope_name = "무신사 플레이어(017)"
     else:
-        # 전체 검색 (카테고리 제한 없음)
         category_param = ""
-        caller_param = "SEARCH" # 일반 통합 검색처럼 동작
-        
-    url = f"https://api.musinsa.com/api2/dp/v1/plp/goods?gf={GENDER_MAP[gender]}&keyword={encoded_kw}&sortCode={s_code}{category_param}&size={num_products}&caller={caller_param}&page=1"
+        scope_name = "전체 상품"
+    
+    url = f"https://api.musinsa.com/api2/dp/v1/plp/goods?gf={GENDER_MAP[gender]}&keyword={encoded_kw}&sortCode={s_code}{category_param}&size={num_products}&caller=SEARCH&page=1"
     
     try:
         resp = requests.get(url, headers=HEADERS)
@@ -159,11 +165,13 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "시장조사"
-        for col, width in zip(['A','B','C','D','E','F','G','H','I'], [6, 8, 15, 40, 12, 12, 10, 10, 16]):
+        # [수정] 엑셀 컬럼 추가: 좋아요(J열)
+        for col, width in zip(['A','B','C','D','E','F','G','H','I','J'], [6, 8, 15, 40, 12, 12, 10, 10, 16, 10]):
             ws.column_dimensions[col].width = width
-        ws.append(["순위", "성별", "브랜드", "제품명", "정상가", "판매가", "할인율", "리뷰", "이미지"])
+        ws.append(["순위", "성별", "브랜드", "제품명", "정상가", "판매가", "할인율", "리뷰", "이미지", "좋아요"])
         
-        st.subheader(f"📊 '{keyword}' 분석 결과 (영역: {search_scope})")
+        st.subheader(f"📊 '{keyword}' 분석 결과")
+        st.caption(f"설정: {scope_name} | 성별: {gender} | 정렬: {sort_label}")
         
         for i in range(0, len(products), 5):
             cols = st.columns(5)
@@ -185,9 +193,16 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
 
                     img_url = item.get("thumbnail")
                     reviews = item.get("reviewCount", 0)
+                    
+                    # [핵심] 좋아요 수 가져오기
+                    likes = item.get("likeCount", 0) # API 키 확인 필요, 보통 likeCount
+                    
                     rank = i + j + 1
                     
-                    # 가격 HTML 생성 (공백 제거)
+                    # 포맷팅 (화면용)
+                    reviews_fmt = format_number(reviews)
+                    likes_fmt = format_number(likes)
+                    
                     if normal > sale:
                         price_html = f"""<div style="display:flex; flex-direction:column; line-height:1.2;"><span style="font-size:11px; color:#aaa; text-decoration:line-through;">{normal:,}원</span><span>{sale:,}원</span></div>"""
                         rate_html = f'<span style="color:#ff0000; font-size:12px;">{rate}%</span>'
@@ -196,7 +211,6 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
                         rate_html = "" 
 
                     with cols[j]:
-                        # HTML 변수 생성 (들여쓰기 제거)
                         card_html = f"""
 <div class="full-card">
 <div class="card-image-box">
@@ -209,15 +223,18 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
 {price_html}
 {rate_html}
 </div>
-<div class="review-row">⭐ {reviews:,}</div>
+<div class="meta-row">
+<span><span class="heart-icon">♥</span>{likes_fmt}</span>
+<span>⭐ {reviews_fmt}</span>
+</div>
 </div>
 </div>
 """
                         st.markdown(card_html, unsafe_allow_html=True)
 
-                    # 엑셀 저장
+                    # 엑셀 저장 (좋아요 추가)
                     row_idx = i + j + 2
-                    ws.append([rank, gender, brand, name, normal, sale, rate, reviews])
+                    ws.append([rank, gender, brand, name, normal, sale, rate, reviews, "", likes])
                     ws.row_dimensions[row_idx].height = 90
                     for cell in ws[row_idx]:
                         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -232,7 +249,6 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
         output = io.BytesIO()
         wb.save(output)
         st.sidebar.success("✅ 분석 완료!")
-        st.sidebar.download_button("📥 엑셀 다운로드", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
+        st.sidebar.download_button("📥 엑셀 다운로드 (좋아요 포함)", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
     else:
         st.warning(f"'{keyword}'에 대한 검색 결과가 없습니다.")
-        st.info("팁: '무신사 플레이어' 영역에 없는 상품일 수 있습니다. '전체 상품'으로 변경해보세요.")
