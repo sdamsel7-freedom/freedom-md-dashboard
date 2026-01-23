@@ -116,6 +116,16 @@ BASE_SORT_OPTIONS = {
 # 3. 사이드바
 with st.sidebar:
     st.header("⚙️ 검색 설정")
+    
+    # [새로운 기능] 검색 영역 선택 (전체 vs 플레이어)
+    search_scope = st.radio(
+        "검색 영역 선택", 
+        ["전체 상품 (All)", "무신사 플레이어 (스포츠/017)"],
+        index=0
+    )
+    
+    st.divider()
+    
     gender = st.radio("성별", list(GENDER_MAP.keys()))
     sort_label = st.selectbox("정렬 기준", list(BASE_SORT_OPTIONS.keys()))
     keyword = st.text_input("검색어", "짐웨어")
@@ -125,7 +135,18 @@ with st.sidebar:
 if st.button(f"🚀 {gender} 데이터 분석 시작"):
     encoded_kw = requests.utils.quote(keyword)
     s_code, s_short = BASE_SORT_OPTIONS[sort_label]
-    url = f"https://api.musinsa.com/api2/dp/v1/plp/goods?gf={GENDER_MAP[gender]}&keyword={encoded_kw}&sortCode={s_code}&category=017&size={num_products}&caller=CATEGORY&page=1"
+    
+    # [핵심 로직] 선택된 영역에 따라 URL 파라미터 변경
+    if "플레이어" in search_scope:
+        # 무신사 플레이어(017) 카테고리 고정
+        category_param = "&category=017"
+        caller_param = "CATEGORY" # 카테고리 내 검색처럼 동작
+    else:
+        # 전체 검색 (카테고리 제한 없음)
+        category_param = ""
+        caller_param = "SEARCH" # 일반 통합 검색처럼 동작
+        
+    url = f"https://api.musinsa.com/api2/dp/v1/plp/goods?gf={GENDER_MAP[gender]}&keyword={encoded_kw}&sortCode={s_code}{category_param}&size={num_products}&caller={caller_param}&page=1"
     
     try:
         resp = requests.get(url, headers=HEADERS)
@@ -142,7 +163,7 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
             ws.column_dimensions[col].width = width
         ws.append(["순위", "성별", "브랜드", "제품명", "정상가", "판매가", "할인율", "리뷰", "이미지"])
         
-        st.subheader(f"📊 '{keyword}' 분석 결과 (정렬: {sort_label})")
+        st.subheader(f"📊 '{keyword}' 분석 결과 (영역: {search_scope})")
         
         for i in range(0, len(products), 5):
             cols = st.columns(5)
@@ -166,7 +187,7 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
                     reviews = item.get("reviewCount", 0)
                     rank = i + j + 1
                     
-                    # [가격 HTML 생성] - 공백 제거 (한 줄로 작성)
+                    # 가격 HTML 생성 (공백 제거)
                     if normal > sale:
                         price_html = f"""<div style="display:flex; flex-direction:column; line-height:1.2;"><span style="font-size:11px; color:#aaa; text-decoration:line-through;">{normal:,}원</span><span>{sale:,}원</span></div>"""
                         rate_html = f'<span style="color:#ff0000; font-size:12px;">{rate}%</span>'
@@ -175,7 +196,7 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
                         rate_html = "" 
 
                     with cols[j]:
-                        # [핵심] HTML 코드 들여쓰기 제거
+                        # HTML 변수 생성 (들여쓰기 제거)
                         card_html = f"""
 <div class="full-card">
 <div class="card-image-box">
@@ -213,4 +234,5 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
         st.sidebar.success("✅ 분석 완료!")
         st.sidebar.download_button("📥 엑셀 다운로드", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
     else:
-        st.warning("데이터를 가져오지 못했습니다. 검색어나 필터를 변경해보세요.")
+        st.warning(f"'{keyword}'에 대한 검색 결과가 없습니다.")
+        st.info("팁: '무신사 플레이어' 영역에 없는 상품일 수 있습니다. '전체 상품'으로 변경해보세요.")
