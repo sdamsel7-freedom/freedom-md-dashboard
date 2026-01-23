@@ -1,12 +1,12 @@
 import streamlit as st
 
-st.set_page_config(page_title="Freedom MD 통합 관제 센터", page_icon="🦁", layout="wide")
+st.set_page_config(page_title="Freedom", page_icon="🦁", layout="wide")
 
-st.title("🦁 Freedom MD 통합 관제 센터")
+st.title("🦁 Freedom")
 st.markdown("""
-### 환영합니다, 롸크초이 팀장님! 👋
+### 환영합니다! 👋
 
-이곳은 **프리덤(Freedom)**의 비즈니스 인텔리전스(BI) 대시보드입니다.
+이곳은 **프리덤(Freedom)**의 비즈니스 인텔리전스 온라인 시장조사 대시보드입니다.
 좌측 사이드바 메뉴에서 분석 도구를 선택하여 업무를 시작하세요.
 
 ---
