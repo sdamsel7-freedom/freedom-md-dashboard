@@ -2,14 +2,12 @@ import streamlit as st
 import pandas as pd
 import requests
 import io
-import statistics
 import openpyxl
 from openpyxl.styles import Alignment
 from openpyxl.drawing.image import Image as XLImage
 from io import BytesIO
-from datetime import datetime
 
-# 1. 페이지 설정 및 CSS (순서 변경에 맞춘 스타일 조정)
+# 1. 페이지 설정 및 CSS
 st.set_page_config(page_title="무신사 비주얼 분석기", layout="wide")
 
 st.markdown("""
@@ -22,7 +20,7 @@ st.markdown("""
         overflow: hidden;
         background-color: white;
         margin-bottom: 10px;
-        height: 300px;
+        height: 320px; /* 가격 표시 공간 확보를 위해 높이 약간 증가 */
         display: flex;
         flex-direction: column;
         transition: transform 0.2s;
@@ -48,19 +46,18 @@ st.markdown("""
     }
     
     .card-text-box {
-        padding: 8px 10px;
+        padding: 10px;
         display: flex;
         flex-direction: column;
         justify-content: space-between;
         flex-grow: 1;
     }
     
-    /* [수정] 제품명 스타일: 맨 위로 올라가므로 폰트 색상을 진하게 변경 */
     .goods-name {
-        height: 34px; /* 2줄 높이 확보 */
+        height: 34px;
         overflow: hidden;
         font-size: 12px;
-        color: #333; /* 가독성을 위해 진한 회색으로 변경 */
+        color: #333;
         line-height: 1.3;
         display: -webkit-box;
         -webkit-line-clamp: 2;
@@ -69,16 +66,15 @@ st.markdown("""
         font-weight: 500;
     }
     
-    /* [수정] 브랜드명 스타일: 두 번째로 내려가면서 스타일 조정 */
     .brand-name {
         height: 16px;
         overflow: hidden;
-        font-weight: normal; /* 힘을 조금 뺌 */
+        font-weight: normal;
         font-size: 11px;
-        color: #888; /* 보조 정보 느낌 */
+        color: #888;
         white-space: nowrap;
         text-overflow: ellipsis;
-        margin-bottom: 4px;
+        margin-bottom: 6px;
     }
     
     .price-row {
@@ -86,14 +82,14 @@ st.markdown("""
         font-weight: bold;
         color: #000;
         display: flex;
-        align-items: center;
+        align-items: flex-end; /* 가격과 할인율 라인 맞춤 */
         justify-content: space-between;
     }
     
     .review-row {
         font-size: 11px;
         color: #999;
-        margin-top: 2px;
+        margin-top: 4px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -101,7 +97,7 @@ st.markdown("""
 st.title("📸 Musinsa Visual Market Analyzer")
 
 # 2. 공통 설정
-HEADERS = {"User-Agent": "Mozilla/5.0...", "Accept": "application/json", "Referer": "https://www.musinsa.com/"}
+HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.musinsa.com/"}
 GENDER_MAP = {"전체": "A", "남성": "M", "여성": "F"}
 
 BASE_SORT_OPTIONS = {
@@ -131,37 +127,65 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
     s_code, s_short = BASE_SORT_OPTIONS[sort_label]
     url = f"https://api.musinsa.com/api2/dp/v1/plp/goods?gf={GENDER_MAP[gender]}&keyword={encoded_kw}&sortCode={s_code}&category=017&size={num_products}&caller=CATEGORY&page=1"
     
-    resp = requests.get(url, headers=HEADERS)
-    products = resp.json().get("data", {}).get("list", [])
+    try:
+        resp = requests.get(url, headers=HEADERS)
+        products = resp.json().get("data", {}).get("list", [])
+    exceptException as e:
+        st.error(f"API 호출 중 오류 발생: {e}")
+        products = []
     
     if products:
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "시장조사"
+        # 엑셀 컬럼 너비 설정
         for col, width in zip(['A','B','C','D','E','F','G','H','I'], [6, 8, 15, 40, 12, 12, 10, 10, 16]):
             ws.column_dimensions[col].width = width
         ws.append(["순위", "성별", "브랜드", "제품명", "정상가", "판매가", "할인율", "리뷰", "이미지"])
         
         st.subheader(f"📊 '{keyword}' 분석 결과 (정렬: {sort_label})")
         
+        # 5개씩 행을 나누어 카드 출력
         for i in range(0, len(products), 5):
             cols = st.columns(5)
             for j in range(5):
                 if i + j < len(products):
                     item = products[i + j]
+                    
+                    # 데이터 추출
                     brand = item.get("brandKorName") or item.get("brandName", "")
                     name = item.get("goodsName", "")
-                    normal = item.get("normalPrice", 0)
-                    sale = item.get("price", 0)
-                    rate = item.get("couponSaleRate") or (round((1 - sale/normal)*100, 1) if normal > 0 else 0)
+                    normal = item.get("normalPrice", 0) # 정상가
+                    sale = item.get("price", 0)         # 판매가 (할인가)
+                    
+                    # 할인율 계산 로직 보완
+                    if item.get("couponSaleRate"):
+                        rate = item.get("couponSaleRate")
+                    elif normal > sale:
+                        rate = round((1 - sale/normal)*100, 1)
+                    else:
+                        rate = 0
+
                     img_url = item.get("thumbnail")
                     reviews = item.get("reviewCount", 0)
-                    
-                    # [핵심] 순위 계산 (1부터 시작)
                     rank = i + j + 1
                     
+                    # [수정된 부분] 가격 표시 HTML 생성
+                    if normal > sale:
+                        # 할인이 있는 경우: 정상가(취소선) + 판매가
+                        price_html = f"""
+                            <div style="display:flex; flex-direction:column; line-height:1.2;">
+                                <span style="font-size:11px; color:#aaa; text-decoration:line-through;">{normal:,}원</span>
+                                <span>{sale:,}원</span>
+                            </div>
+                        """
+                        rate_html = f'<span style="color:#ff0000; font-size:12px;">{rate}%</span>'
+                    else:
+                        # 할인이 없는 경우: 판매가만 표시
+                        price_html = f"<span>{sale:,}원</span>"
+                        rate_html = "" # 할인율 숨김
+
                     with cols[j]:
-                        # [핵심] 순서 변경: 제품명(Rank포함) -> 브랜드 -> 가격
                         st.markdown(f"""
                             <div class="full-card">
                                 <div class="card-image-box">
@@ -171,19 +195,22 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
                                     <div class="goods-name"><b>{rank}.</b> {name}</div>
                                     <div class="brand-name">{brand}</div>
                                     <div class="price-row">
-                                        <span>{sale:,}원</span>
-                                        <span style="color:#ff0000; font-size:12px;">{rate}%</span>
+                                        {price_html}
+                                        {rate_html}
                                     </div>
                                     <div class="review-row">⭐ {reviews:,}</div>
                                 </div>
                             </div>
                         """, unsafe_allow_html=True)
 
+                    # 엑셀 데이터 저장
                     row_idx = i + j + 2
                     ws.append([rank, gender, brand, name, normal, sale, rate, reviews])
                     ws.row_dimensions[row_idx].height = 90
                     for cell in ws[row_idx]:
                         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                    
+                    # 엑셀 이미지 삽입
                     try:
                         img_data = BytesIO(requests.get(img_url).content)
                         img_obj = XLImage(img_data)
@@ -196,4 +223,4 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
         st.sidebar.success("✅ 분석 완료!")
         st.sidebar.download_button("📥 엑셀 다운로드", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
     else:
-        st.error("데이터를 가져오지 못했습니다.")
+        st.warning("데이터를 가져오지 못했습니다. 검색어나 필터를 변경해보세요.")
