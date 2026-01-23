@@ -5,9 +5,10 @@ import json
 from datetime import datetime
 import io
 import os
+import time  # 화면 새로고침 전 대기 시간을 위해 추가
 
 # 1. 페이지 설정
-st.set_page_config(page_title="프리덤 네이버 트렌드 | 자동 키워드", layout="wide")
+st.set_page_config(page_title="프리덤 네이버 트렌드 | 자동 새로고침", layout="wide")
 st.title("🏃‍♂️ Freedom Naver Trend Dashboard")
 
 # 2. 보안 설정 (Secrets)
@@ -58,10 +59,8 @@ def get_api_data(keyword_groups, gender, age_codes):
                         })
             return pd.DataFrame(data_list)
         else:
-            # 에러 발생 시 로그 출력 (디버깅용)
-            # st.error(f"API Error: {response.status_code} - {response.text}")
+            # API 호출 실패 시 (디버깅용 로그는 주석 처리)
             pass
-            
     except Exception as e:
         st.sidebar.error(f"Error: {e}")
     return pd.DataFrame()
@@ -70,7 +69,7 @@ def get_api_data(keyword_groups, gender, age_codes):
 with st.sidebar:
     st.header("📁 데이터 관리")
     
-    # 분석 양식 다운로드 버튼
+    # 분석 양식 다운로드 버튼 로직
     template_file = "keywords_input_.xlsx"
     paths = [template_file, os.path.join("..", template_file)]
     target_path = next((p for p in paths if os.path.exists(p)), None)
@@ -98,28 +97,19 @@ with st.sidebar:
         g2_name = st.text_input("그룹 2 이름", "", key="g2n", placeholder="비교할 경쟁사 이름")
         g2_kws = st.text_input("그룹 2 추가 키워드", "", key="g2k", placeholder="비워두면 그룹명만 검색")
 
-        # [수정] 그룹 1 처리 로직
+        # 그룹 1 처리
         if g1_name:
-            kws_list = [g1_name] # 기본적으로 그룹명 포함
+            kws_list = [g1_name]
             if g1_kws.strip():
                 kws_list.extend([k.strip() for k in g1_kws.split(",") if k.strip()])
+            all_groups.append({"groupName": g1_name, "keywords": list(dict.fromkeys(kws_list))})
             
-            # 중복 제거 후 추가
-            all_groups.append({
-                "groupName": g1_name, 
-                "keywords": list(dict.fromkeys(kws_list))
-            })
-            
-        # [수정] 그룹 2 처리 로직
+        # 그룹 2 처리
         if g2_name:
             kws_list2 = [g2_name]
             if g2_kws.strip():
                 kws_list2.extend([k.strip() for k in g2_kws.split(",") if k.strip()])
-            
-            all_groups.append({
-                "groupName": g2_name, 
-                "keywords": list(dict.fromkeys(kws_list2))
-            })
+            all_groups.append({"groupName": g2_name, "keywords": list(dict.fromkeys(kws_list2))})
 
     else:
         # 엑셀 파일 업로드
@@ -127,7 +117,6 @@ with st.sidebar:
         if uploaded_file:
             try:
                 df_input = pd.read_excel(uploaded_file)
-                # 컬럼명 유연하게 찾기
                 cols = {c.lower(): c for c in df_input.columns}
                 name_col_key = next((k for k in cols if k in ['groupname', '그룹명']), None)
                 kw_col_key = next((k for k in cols if k in ['keywords', '키워드']), None)
@@ -138,19 +127,14 @@ with st.sidebar:
                         g_name = str(row[real_name_col]).strip()
                         if not g_name or g_name.startswith('*') or g_name == "nan": continue
                         
-                        # [수정] 기본 키워드는 그룹명 하나로 시작
                         keyword_list = [g_name]
-                        
-                        # 키워드 컬럼이 있고 값이 있을 때만 추가
                         if kw_col_key:
                             raw_val = row[cols[kw_col_key]]
                             if pd.notnull(raw_val) and str(raw_val).lower() != 'nan' and str(raw_val).strip() != '':
                                 extra_kws = [k.strip() for k in str(raw_val).split(',') if k.strip()]
                                 keyword_list.extend(extra_kws)
                         
-                        # 중복 제거
-                        final_keywords = list(dict.fromkeys(keyword_list))
-                        all_groups.append({"groupName": g_name, "keywords": final_keywords})
+                        all_groups.append({"groupName": g_name, "keywords": list(dict.fromkeys(keyword_list))})
                 else:
                     st.error("엑셀 파일에 'GroupName' 컬럼이 없습니다.")
             except Exception as e:
@@ -173,26 +157,64 @@ if all_groups:
         if not age_codes:
             st.error("연령대를 최소 하나 이상 선택해주세요.")
         else:
-            final_df = pd.DataFrame()
-            anchor_group = all_groups[0]
-            anchor_name = anchor_group['groupName']
-            other_groups = all_groups[1:]
-
             status = st.empty()
             progress = st.progress(0)
+            status.text("⏳ 네이버 데이터랩에서 데이터를 가져오는 중입니다...")
             
-            # 네이버는 한 번에 5개 그룹까지 비교 가능하므로, 5개씩 끊어서 요청
-            # 직접 입력(최대 2개)의 경우 한 번에 처리됨
+            # 네이버 API 호출 (한 번에 최대 5개 그룹)
             batch_res = pd.concat([
                 get_api_data(all_groups[:5], 'm', age_codes), 
                 get_api_data(all_groups[:5], 'f', age_codes)
             ], ignore_index=True)
+            
+            progress.progress(100)
+            status.empty()
 
             if not batch_res.empty:
+                # 결과 세션에 저장
                 st.session_state['naver_result'] = batch_res
-                st.session_state['naver_anchor'] = anchor_name
-                st.success("✅ 분석 완료!")
+                st.session_state['naver_anchor'] = all_groups[0]['groupName']
+                
+                st.success("✅ 분석 완료! 결과를 출력합니다.")
+                
+                # [핵심] 1초 대기 후 화면을 새로고침하여 아래 '결과 출력' 부분이 실행되게 함
+                time.sleep(1)
+                st.rerun()
             else:
-                st.warning("데이터 조회 결과가 없습니다. 키워드나 기간을 확인해주세요.")
-elif input_mode == "직접 입력 (최대 2개)":
+                st.warning("⚠️ 분석 결과가 없습니다. (검색량이 너무 적거나 키워드 오류)")
+                st.info("Tip: 검색량이 매우 적은 키워드는 네이버가 데이터를 반환하지 않습니다.")
+
+# 6. 결과 출력 (세션 상태 확인 후 표시)
+if 'naver_result' in st.session_state and not st.session_state['naver_result'].empty:
+    res_df = st.session_state['naver_result']
+    
+    st.divider()
+    st.subheader("📈 분석 결과")
+    
+    # 1. 차트 그리기
+    if 'Keyword_Group' in res_df.columns and 'Ratio' in res_df.columns:
+        available = res_df['Keyword_Group'].unique().tolist()
+        selected = st.multiselect("표시할 항목 선택:", options=available, default=available)
+        
+        if selected:
+            f_df = res_df[res_df['Keyword_Group'].isin(selected)]
+            
+            # 피벗 테이블 생성 (날짜별 Ratio 평균)
+            chart_data = f_df.pivot_table(index='Date', columns='Keyword_Group', values='Ratio', aggfunc='mean')
+            st.line_chart(chart_data)
+            
+            # 2. 엑셀 다운로드
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                f_df.to_excel(writer, index=False)
+            
+            st.download_button("📥 결과 엑셀 저장", output.getvalue(), file_name="naver_trend_result.xlsx")
+            
+            # 3. 데이터프레임 표시
+            st.dataframe(f_df, use_container_width=True)
+        else:
+            st.warning("선택된 키워드가 없습니다.")
+    else:
+        st.error("데이터 형식 오류: 필요한 컬럼이 없습니다.")
+elif input_mode == "직접 입력 (최대 2개)" and not all_groups:
     st.info("👈 사이드바에서 그룹 이름을 입력하고 분석을 시작하세요.")
