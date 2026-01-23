@@ -20,7 +20,7 @@ st.markdown("""
         overflow: hidden;
         background-color: white;
         margin-bottom: 10px;
-        height: 320px; /* 가격 표시 공간 확보를 위해 높이 약간 증가 */
+        height: 320px;
         display: flex;
         flex-direction: column;
         transition: transform 0.2s;
@@ -82,7 +82,7 @@ st.markdown("""
         font-weight: bold;
         color: #000;
         display: flex;
-        align-items: flex-end; /* 가격과 할인율 라인 맞춤 */
+        align-items: flex-end;
         justify-content: space-between;
     }
     
@@ -130,7 +130,7 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
     try:
         resp = requests.get(url, headers=HEADERS)
         products = resp.json().get("data", {}).get("list", [])
-    exceptException as e:
+    except Exception as e:  # [수정됨] 띄어쓰기 오타 수정 완료!
         st.error(f"API 호출 중 오류 발생: {e}")
         products = []
     
@@ -138,27 +138,23 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "시장조사"
-        # 엑셀 컬럼 너비 설정
         for col, width in zip(['A','B','C','D','E','F','G','H','I'], [6, 8, 15, 40, 12, 12, 10, 10, 16]):
             ws.column_dimensions[col].width = width
         ws.append(["순위", "성별", "브랜드", "제품명", "정상가", "판매가", "할인율", "리뷰", "이미지"])
         
         st.subheader(f"📊 '{keyword}' 분석 결과 (정렬: {sort_label})")
         
-        # 5개씩 행을 나누어 카드 출력
         for i in range(0, len(products), 5):
             cols = st.columns(5)
             for j in range(5):
                 if i + j < len(products):
                     item = products[i + j]
                     
-                    # 데이터 추출
                     brand = item.get("brandKorName") or item.get("brandName", "")
                     name = item.get("goodsName", "")
-                    normal = item.get("normalPrice", 0) # 정상가
-                    sale = item.get("price", 0)         # 판매가 (할인가)
+                    normal = item.get("normalPrice", 0)
+                    sale = item.get("price", 0)
                     
-                    # 할인율 계산 로직 보완
                     if item.get("couponSaleRate"):
                         rate = item.get("couponSaleRate")
                     elif normal > sale:
@@ -170,9 +166,8 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
                     reviews = item.get("reviewCount", 0)
                     rank = i + j + 1
                     
-                    # [수정된 부분] 가격 표시 HTML 생성
+                    # 가격 표시 HTML 생성
                     if normal > sale:
-                        # 할인이 있는 경우: 정상가(취소선) + 판매가
                         price_html = f"""
                             <div style="display:flex; flex-direction:column; line-height:1.2;">
                                 <span style="font-size:11px; color:#aaa; text-decoration:line-through;">{normal:,}원</span>
@@ -181,9 +176,8 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
                         """
                         rate_html = f'<span style="color:#ff0000; font-size:12px;">{rate}%</span>'
                     else:
-                        # 할인이 없는 경우: 판매가만 표시
                         price_html = f"<span>{sale:,}원</span>"
-                        rate_html = "" # 할인율 숨김
+                        rate_html = "" 
 
                     with cols[j]:
                         st.markdown(f"""
@@ -203,14 +197,12 @@ if st.button(f"🚀 {gender} 데이터 분석 시작"):
                             </div>
                         """, unsafe_allow_html=True)
 
-                    # 엑셀 데이터 저장
                     row_idx = i + j + 2
                     ws.append([rank, gender, brand, name, normal, sale, rate, reviews])
                     ws.row_dimensions[row_idx].height = 90
                     for cell in ws[row_idx]:
                         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
                     
-                    # 엑셀 이미지 삽입
                     try:
                         img_data = BytesIO(requests.get(img_url).content)
                         img_obj = XLImage(img_data)
