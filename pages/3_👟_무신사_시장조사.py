@@ -20,7 +20,7 @@ st.markdown("""
         overflow: hidden;
         background-color: white;
         margin-bottom: 10px;
-        height: 340px;
+        height: 320px; /* 좋아요 행 삭제로 높이 원상복구 */
         display: flex;
         flex-direction: column;
         transition: transform 0.2s;
@@ -87,14 +87,12 @@ st.markdown("""
         margin-bottom: 4px;
     }
     
-    .meta-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+    .review-row {
         font-size: 11px;
-        color: #777;
+        color: #999;
+        margin-top: 2px;
+        text-align: right;
     }
-    .heart-icon { color: #ff3333; font-weight: bold; margin-right: 2px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -102,28 +100,28 @@ st.title("📸 Musinsa Visual Market Analyzer")
 
 # 2. 공통 설정
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json",
     "Referer": "https://www.musinsa.com/"
 }
 GENDER_MAP = {"전체": "A", "남성": "M", "여성": "F"}
 
-# 정렬 옵션 (3개월, 1년 포함)
+# [정렬 옵션] 추천순 제거 / 1개월, 3개월, 1년 추가 완료
 BASE_SORT_OPTIONS = {
     "판매수량순 (1개월)": ("SALE_ONE_MONTH_COUNT", "판매1개월"),
     "판매수량순 (3개월)": ("SALE_THREE_MONTH_COUNT", "판매3개월"),
-    "판매수량순 (12개월)": ("SALE_ONE_YEAR_COUNT", "판매1년"),
+    "판매수량순 (1년)": ("SALE_ONE_YEAR_COUNT", "판매1년"),
     
     "판매금액순 (1개월)": ("SALE_ONE_MONTH_AMOUNT", "매출1개월"),
     "판매금액순 (3개월)": ("SALE_THREE_MONTH_AMOUNT", "매출3개월"),
-    "판매금액순 (12개월)": ("SALE_ONE_YEAR_AMOUNT", "매출1년"),
+    "판매금액순 (1년)": ("SALE_ONE_YEAR_AMOUNT", "매출1년"),
     
     "후기순 (REVIEW)": ("REVIEW", "리뷰순"),
     "신상품순 (NEW)": ("NEW", "신상순"),
     "할인율순 (DISCOUNT)": ("DISCOUNT_RATE", "할인순"),
 }
 
-# [함수 1] 숫자 포맷팅
+# [함수] 숫자 포맷팅
 def format_number(num):
     if num is None: return "0"
     if num >= 10000:
@@ -132,53 +130,6 @@ def format_number(num):
         return f"{num/1000:.1f}천"
     else:
         return f"{num:,}"
-
-# [함수 2] 상품 상세 정보 일괄 조회 (만능 탐색 로직 적용)
-def get_goods_details_batch(goods_ids):
-    if not goods_ids: return {}
-    
-    url = "https://api.musinsa.com/api2/dp/v1/goods"
-    params = {"goodsNoList": ",".join(str(gid) for gid in goods_ids)}
-    
-    try:
-        resp = requests.get(url, headers=HEADERS, params=params, timeout=5)
-        
-        # API 상태 확인용 (디버깅)
-        if resp.status_code != 200:
-            st.toast(f"⚠️ 좋아요 정보 수신 실패 (Status: {resp.status_code})")
-            return {}
-            
-        data = resp.json()
-        like_map = {}
-        
-        if "data" in data and "list" in data["data"]:
-            count_success = 0
-            for item in data["data"]["list"]:
-                gid = str(item.get("goodsNo"))
-                
-                # [핵심] 가능한 모든 위치 탐색 (stat 객체 내부까지)
-                likes = item.get("likeCount") # 1순위
-                if likes is None: likes = item.get("wishCount") # 2순위
-                if likes is None and "stat" in item: 
-                    likes = item["stat"].get("wishCount") # 3순위 (Nested)
-                if likes is None and "stat" in item:
-                    likes = item["stat"].get("likeCount") # 4순위 (Nested)
-                
-                # 그래도 없으면 0
-                val = likes if likes is not None else 0
-                like_map[gid] = val
-                if val > 0: count_success += 1
-            
-            # 성공 메시지 띄우기 (몇 개나 가져왔는지 확인)
-            if count_success > 0:
-                st.toast(f"✅ {count_success}개 상품의 좋아요 정보를 가져왔습니다!")
-            else:
-                st.toast("ℹ️ 좋아요 정보가 모두 0건이거나 구조가 다릅니다.")
-                
-        return like_map
-    except Exception as e:
-        st.toast(f"⚠️ 에러 발생: {e}")
-        return {}
 
 # 3. 사이드바
 with st.sidebar:
@@ -219,18 +170,13 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
         products = []
     
     if products:
-        # [단계 1] 상품 ID 추출
-        goods_ids = [p['goodsNo'] for p in products]
-        
-        # [단계 2] 상세 정보(좋아요) 가져오기
-        like_map = get_goods_details_batch(goods_ids)
-        
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "시장조사"
-        for col, width in zip(['A','B','C','D','E','F','G','H','I','J'], [6, 8, 15, 40, 12, 12, 10, 10, 16, 10]):
+        # 엑셀 컬럼에서 좋아요 제거
+        for col, width in zip(['A','B','C','D','E','F','G','H','I'], [6, 8, 15, 40, 12, 12, 10, 10, 16]):
             ws.column_dimensions[col].width = width
-        ws.append(["순위", "성별", "브랜드", "제품명", "정상가", "판매가", "할인율", "리뷰", "이미지", "좋아요"])
+        ws.append(["순위", "성별", "브랜드", "제품명", "정상가", "판매가", "할인율", "리뷰", "이미지"])
         
         st.subheader(f"📊 '{keyword}' 분석 결과")
         st.caption(f"설정: {scope_name} | 성별: {gender} | 정렬: {sort_label}")
@@ -245,7 +191,6 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
                     name = item.get("goodsName", "")
                     normal = item.get("normalPrice", 0)
                     sale = item.get("price", 0)
-                    goods_id = str(item.get("goodsNo"))
                     
                     if item.get("couponSaleRate"):
                         rate = item.get("couponSaleRate")
@@ -256,14 +201,8 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
 
                     img_url = item.get("thumbnail")
                     reviews = item.get("reviewCount", 0)
-                    
-                    # [단계 3] 좋아요 매칭
-                    likes = like_map.get(goods_id, 0)
-                    
                     rank = i + j + 1
-                    
                     reviews_fmt = format_number(reviews)
-                    likes_fmt = format_number(likes)
                     
                     if normal > sale:
                         price_html = f"""<div style="display:flex; flex-direction:column; line-height:1.2;"><span style="font-size:11px; color:#aaa; text-decoration:line-through;">{normal:,}원</span><span>{sale:,}원</span></div>"""
@@ -285,18 +224,15 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
 {price_html}
 {rate_html}
 </div>
-<div class="meta-row">
-<span><span class="heart-icon">♥</span>{likes_fmt}</span>
-<span>⭐ {reviews_fmt}</span>
-</div>
+<div class="review-row">⭐ {reviews_fmt}</div>
 </div>
 </div>
 """
                         st.markdown(card_html, unsafe_allow_html=True)
 
-                    # 엑셀 저장
+                    # 엑셀 저장 (좋아요 제외)
                     row_idx = i + j + 2
-                    ws.append([rank, gender, brand, name, normal, sale, rate, reviews, "", likes])
+                    ws.append([rank, gender, brand, name, normal, sale, rate, reviews])
                     ws.row_dimensions[row_idx].height = 90
                     for cell in ws[row_idx]:
                         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -311,6 +247,6 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
         output = io.BytesIO()
         wb.save(output)
         st.sidebar.success("✅ 분석 완료!")
-        st.sidebar.download_button("📥 엑셀 다운로드 (좋아요 포함)", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
+        st.sidebar.download_button("📥 엑셀 다운로드", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
     else:
         st.warning(f"'{keyword}'에 대한 검색 결과가 없습니다.")
