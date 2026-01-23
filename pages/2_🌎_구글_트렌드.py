@@ -11,23 +11,28 @@ import os
 # 1. 페이지 설정
 st.set_page_config(page_title="글로벌 트렌드 분석 도구 | 프리덤", layout="wide")
 st.title("🌎 Global Google Trends Dashboard")
-st.markdown("### 오류가 수정된 안전 모드 트렌드 분석기")
 
 # 2. 구글 트렌드 설정 함수
 def get_pytrends():
-    return TrendReq(hl='ko', tz=324, retries=5, backoff_factor=2)
+    # requests_args를 추가하여 타임아웃 설정을 강화
+    return TrendReq(hl='ko', tz=324, retries=3, backoff_factor=1, timeout=(10, 25))
 
 @st.cache_data(ttl=3600)
 def fetch_google_data_safe(terms, timeframe, geo):
-    time.sleep(random.uniform(5, 10))  # 요청 간격을 조금 넉넉하게 둠
+    time.sleep(random.uniform(2, 5))  # 랜덤 대기 시간
     py_instance = get_pytrends()
     try:
         py_instance.build_payload(terms, timeframe=timeframe, geo=geo)
         data = py_instance.interest_over_time()
         return data
     except Exception as e:
-        if "429" in str(e):
+        err_msg = str(e)
+        if "429" in err_msg:
             return "BLOCK"
+        # urllib3 버전 이슈 등으로 인한 TypeError 처리
+        if "method_whitelist" in err_msg or "allowed_methods" in err_msg:
+            st.error("⚠️ 서버 버전 충돌이 감지되었습니다. requirements.txt에 'urllib3<2.0.0'을 추가해주세요.")
+            return None
         raise e
 
 # 3. 사이드바 구성
@@ -47,35 +52,41 @@ with st.sidebar:
                 file_name="trend_analysis_template.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-    else:
-        st.warning("⚠️ 양식 파일(keywords_input_.xlsx)을 찾을 수 없습니다.")
     
     st.divider()
 
-    # --- [수정 포인트] 입력 방식 선택 (직접 입력 vs 엑셀) ---
+    # --- 입력 방식 선택 (직접 입력 vs 엑셀) ---
     input_mode = st.radio("입력 방식 선택", ["직접 입력 (최대 2개)", "엑셀 파일 업로드"])
     
     all_groups = [] # 분석할 데이터를 담을 리스트
 
     if input_mode == "직접 입력 (최대 2개)":
         st.subheader("⌨️ 키워드 직접 입력")
-        st.caption("그룹명과 추가 키워드는 띄어쓰기로 합쳐져서 검색됩니다. (예: 프리덤 짐웨어)")
+        st.info("💡 추가 키워드를 비워두면 '그룹 이름'만으로 검색합니다.")
         
         # 그룹 1
         g1_name = st.text_input("그룹 1 이름 (기준)", "프리덤", key="g1_n")
-        g1_kws = st.text_input("그룹 1 추가 키워드", "짐웨어, 애슬레저", key="g1_k")
+        g1_kws = st.text_input("그룹 1 추가 키워드 (선택)", "", key="g1_k", placeholder="비워두면 그룹명만 검색")
         
         # 그룹 2
-        g2_name = st.text_input("그룹 2 이름 (비교)", "나이키", key="g2_n")
-        g2_kws = st.text_input("그룹 2 추가 키워드", "운동화, 런닝", key="g2_k")
+        g2_name = st.text_input("그룹 2 이름 (비교)", "", key="g2_n", placeholder="비교할 경쟁사 이름")
+        g2_kws = st.text_input("그룹 2 추가 키워드 (선택)", "", key="g2_k", placeholder="비워두면 그룹명만 검색")
 
-        # 데이터 변환 로직
+        # [수정] 키워드가 비어있을 경우 처리 로직
         if g1_name:
-            term1 = g1_name + " " + " ".join([k.strip() for k in g1_kws.split(",") if k.strip()])
+            extra_kws = [k.strip() for k in g1_kws.split(",") if k.strip()]
+            if extra_kws:
+                term1 = g1_name + " " + " ".join(extra_kws)
+            else:
+                term1 = g1_name # 키워드 없으면 그룹명만 사용
             all_groups.append({"name": g1_name, "term": term1.strip()})
         
         if g2_name:
-            term2 = g2_name + " " + " ".join([k.strip() for k in g2_kws.split(",") if k.strip()])
+            extra_kws2 = [k.strip() for k in g2_kws.split(",") if k.strip()]
+            if extra_kws2:
+                term2 = g2_name + " " + " ".join(extra_kws2)
+            else:
+                term2 = g2_name # 키워드 없으면 그룹명만 사용
             all_groups.append({"name": g2_name, "term": term2.strip()})
 
     else:
@@ -84,17 +95,37 @@ with st.sidebar:
         if uploaded_file:
             try:
                 df_input = pd.read_excel(uploaded_file)
-                if 'GroupName' in df_input.columns:
+                
+                # 컬럼명 찾기 (대소문자 무관)
+                cols = {c.lower(): c for c in df_input.columns}
+                name_col_key = next((k for k in cols if k in ['groupname', '그룹명']), None)
+                kw_col_key = next((k for k in cols if k in ['keywords', '키워드']), None)
+
+                if name_col_key:
+                    real_name_col = cols[name_col_key]
+                    
                     for _, row in df_input.iterrows():
-                        g_name = str(row['GroupName']).strip()
+                        g_name = str(row[real_name_col]).strip()
                         if not g_name or g_name.startswith('*') or g_name == "nan": continue
-                        kw_val = str(row['Keywords']).strip() if 'Keywords' in df_input.columns and pd.notnull(row['Keywords']) else ""
-                        search_term = " ".join([g_name] + ([k.strip() for k in kw_val.split(',')] if kw_val and kw_val != "nan" else []))
+                        
+                        # [수정] 엑셀 키워드 컬럼 처리 강화
+                        search_term = g_name # 기본값은 그룹명
+                        
+                        if kw_col_key:
+                            real_kw_col = cols[kw_col_key]
+                            raw_val = row[real_kw_col]
+                            
+                            # 값이 존재하고 nan이 아닐 때만 키워드 병합
+                            if pd.notnull(raw_val) and str(raw_val).lower() != 'nan' and str(raw_val).strip() != '':
+                                kw_list = [k.strip() for k in str(raw_val).split(',') if k.strip()]
+                                if kw_list:
+                                    search_term = g_name + " " + " ".join(kw_list)
+                        
                         all_groups.append({"name": g_name, "term": search_term})
                 else:
-                    st.error("엑셀에 'GroupName' 컬럼이 필요합니다.")
+                    st.error("엑셀에 'GroupName(또는 그룹명)' 컬럼이 반드시 필요합니다.")
             except Exception as e:
-                st.error(f"파일 읽기 오류: {e}")
+                st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
     st.divider()
     st.subheader("⚙️ 분석 조건")
@@ -116,8 +147,7 @@ if all_groups:
     anchor = all_groups[0]
     others = all_groups[1:]
     
-    # 데이터 미리보기
-    st.write(f"📊 **분석 대상:** {', '.join([g['name'] for g in all_groups])}")
+    st.markdown(f"**📊 분석 대상:** {' vs '.join([g['name'] for g in all_groups])}")
 
     if st.button("🚀 분석 시작 (Run Analysis)"):
         final_df = pd.DataFrame()
@@ -125,27 +155,28 @@ if all_groups:
         status = st.empty()
         progress = st.progress(0)
 
-        # 배치 사이즈 (구글은 한번에 5개까지 가능하므로 2개 입력 시에는 한 번에 처리됨)
+        # 배치 사이즈 설정
         batch_size = 4 
-        
-        # others가 없어도(그룹이 1개여도) 돌아가도록 로직 처리
         loop_target = others if others else []
         
-        # 만약 비교 그룹이 없으면(그룹 1개만 입력 시) 단독 실행
+        # 1. 단일 그룹 분석 (비교 대상 없을 때)
         if not loop_target:
              status.text(f"⏳ 데이터 수집 중... (단일 그룹)")
              batch_res = fetch_google_data_safe([anchor['term']], timeframe, geo)
+             
              if isinstance(batch_res, str) and batch_res == "BLOCK":
                 st.error("🚨 구글 접속이 일시 차단되었습니다. 잠시 후 다시 시도해주세요.")
-                st.stop()
-             if batch_res is not None and not batch_res.empty:
+             elif batch_res is not None and not batch_res.empty:
                  if 'isPartial' in batch_res.columns: batch_res = batch_res.drop(columns=['isPartial'])
                  batch_res.columns = [anchor['name']]
                  final_df = batch_res
                  st.session_state['result'] = final_df
                  st.success("✅ 분석 완료!")
+             else:
+                 st.warning(f"데이터가 없습니다. 검색어('{anchor['term']}')를 확인해주세요.")
+
+        # 2. 다중 그룹 분석 (비교 대상 있을 때)
         else:
-            # 여러 그룹일 경우 배치 처리
             for i in range(0, len(loop_target), batch_size):
                 chunk = loop_target[i:i+batch_size]
                 current_names = [anchor['name']] + [c['name'] for c in chunk]
@@ -166,7 +197,6 @@ if all_groups:
                         reference_data = batch_res[[anchor['name']]].copy()
                         final_df = batch_res
                     else:
-                        # 스케일링 로직 (기준 그룹을 통해 데이터 보정)
                         curr_anchor = batch_res[[anchor['name']]]
                         scale_factor = (reference_data[anchor['name']] / curr_anchor[anchor['name']]).fillna(1).replace([float('inf'), -float('inf')], 1)
                         for col in batch_res.columns: batch_res[col] = batch_res[col] * scale_factor
@@ -184,13 +214,11 @@ if 'result' in st.session_state:
     res_df = st.session_state['result']
     st.divider()
     
-    # 키워드 선택 (기본적으로 전체 선택)
     selected = st.multiselect("📈 표시할 키워드 선택:", options=res_df.columns.tolist(), default=res_df.columns.tolist())
     
     if selected:
         st.line_chart(res_df[selected])
         
-        # 엑셀 다운로드
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             res_df[selected].to_excel(writer, index=True)
@@ -198,4 +226,4 @@ if 'result' in st.session_state:
         st.download_button("📥 분석 결과(Excel) 저장", output.getvalue(), file_name="google_trend_result.xlsx")
         st.dataframe(res_df[selected], use_container_width=True)
 elif not all_groups:
-    st.info("👈 사이드바에서 '직접 입력'을 하거나 '엑셀 파일'을 업로드해주세요.")
+    st.info("👈 사이드바에서 키워드를 입력하고 '분석 시작'을 눌러주세요.")
