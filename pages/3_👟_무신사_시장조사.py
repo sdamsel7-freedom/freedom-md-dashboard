@@ -1,0 +1,199 @@
+import streamlit as st
+import pandas as pd
+import requests
+import io
+import statistics
+import openpyxl
+from openpyxl.styles import Alignment
+from openpyxl.drawing.image import Image as XLImage
+from io import BytesIO
+from datetime import datetime
+
+# 1. 페이지 설정 및 CSS (순서 변경에 맞춘 스타일 조정)
+st.set_page_config(page_title="무신사 비주얼 분석기", layout="wide")
+
+st.markdown("""
+    <style>
+    .block-container { padding-top: 0.5rem; padding-bottom: 1rem; }
+    
+    .full-card {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        overflow: hidden;
+        background-color: white;
+        margin-bottom: 10px;
+        height: 300px;
+        display: flex;
+        flex-direction: column;
+        transition: transform 0.2s;
+    }
+    .full-card:hover {
+        border-color: #333;
+    }
+    
+    .card-image-box {
+        height: 180px;
+        width: 100%;
+        overflow: hidden;
+        border-bottom: 1px solid #f0f0f0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #fafafa;
+    }
+    .card-image-box img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain; 
+    }
+    
+    .card-text-box {
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        flex-grow: 1;
+    }
+    
+    /* [수정] 제품명 스타일: 맨 위로 올라가므로 폰트 색상을 진하게 변경 */
+    .goods-name {
+        height: 34px; /* 2줄 높이 확보 */
+        overflow: hidden;
+        font-size: 12px;
+        color: #333; /* 가독성을 위해 진한 회색으로 변경 */
+        line-height: 1.3;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        margin-bottom: 2px;
+        font-weight: 500;
+    }
+    
+    /* [수정] 브랜드명 스타일: 두 번째로 내려가면서 스타일 조정 */
+    .brand-name {
+        height: 16px;
+        overflow: hidden;
+        font-weight: normal; /* 힘을 조금 뺌 */
+        font-size: 11px;
+        color: #888; /* 보조 정보 느낌 */
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        margin-bottom: 4px;
+    }
+    
+    .price-row {
+        font-size: 14px;
+        font-weight: bold;
+        color: #000;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .review-row {
+        font-size: 11px;
+        color: #999;
+        margin-top: 2px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("📸 Musinsa Visual Market Analyzer")
+
+# 2. 공통 설정
+HEADERS = {"User-Agent": "Mozilla/5.0...", "Accept": "application/json", "Referer": "https://www.musinsa.com/"}
+GENDER_MAP = {"전체": "A", "남성": "M", "여성": "F"}
+
+BASE_SORT_OPTIONS = {
+    "무신사 추천순": ("POPULAR", "추천순"),
+    "후기순(리뷰순)": ("REVIEW", "리뷰순"),
+    "판매금액순(1개월)": ("SALE_ONE_MONTH_AMOUNT", "매출1개월"),
+    "판매수량순(1개월)": ("SALE_ONE_MONTH_COUNT", "판매1개월"),
+    "판매금액순(3개월)": ("SALE_THREE_MONTH_AMOUNT", "매출3개월"),
+    "판매수량순(3개월)": ("SALE_THREE_MONTH_COUNT", "판매3개월"),
+    "판매금액순(1년)": ("SALE_ONE_YEAR_AMOUNT", "매출1년"),
+    "판매수량순(1년)": ("SALE_ONE_YEAR_COUNT", "판매1년"),
+    "신상품순": ("NEW", "신상순"),
+    "할인율순": ("DISCOUNT_RATE", "할인순"),
+}
+
+# 3. 사이드바
+with st.sidebar:
+    st.header("⚙️ 검색 설정")
+    gender = st.radio("성별", list(GENDER_MAP.keys()))
+    sort_label = st.selectbox("정렬 기준", list(BASE_SORT_OPTIONS.keys()))
+    keyword = st.text_input("검색어", "짐웨어")
+    num_products = st.slider("수집 개수", 10, 100, 50)
+
+# 4. 분석 로직
+if st.button(f"🚀 {gender} 데이터 분석 시작"):
+    encoded_kw = requests.utils.quote(keyword)
+    s_code, s_short = BASE_SORT_OPTIONS[sort_label]
+    url = f"https://api.musinsa.com/api2/dp/v1/plp/goods?gf={GENDER_MAP[gender]}&keyword={encoded_kw}&sortCode={s_code}&category=017&size={num_products}&caller=CATEGORY&page=1"
+    
+    resp = requests.get(url, headers=HEADERS)
+    products = resp.json().get("data", {}).get("list", [])
+    
+    if products:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "시장조사"
+        for col, width in zip(['A','B','C','D','E','F','G','H','I'], [6, 8, 15, 40, 12, 12, 10, 10, 16]):
+            ws.column_dimensions[col].width = width
+        ws.append(["순위", "성별", "브랜드", "제품명", "정상가", "판매가", "할인율", "리뷰", "이미지"])
+        
+        st.subheader(f"📊 '{keyword}' 분석 결과 (정렬: {sort_label})")
+        
+        for i in range(0, len(products), 5):
+            cols = st.columns(5)
+            for j in range(5):
+                if i + j < len(products):
+                    item = products[i + j]
+                    brand = item.get("brandKorName") or item.get("brandName", "")
+                    name = item.get("goodsName", "")
+                    normal = item.get("normalPrice", 0)
+                    sale = item.get("price", 0)
+                    rate = item.get("couponSaleRate") or (round((1 - sale/normal)*100, 1) if normal > 0 else 0)
+                    img_url = item.get("thumbnail")
+                    reviews = item.get("reviewCount", 0)
+                    
+                    # [핵심] 순위 계산 (1부터 시작)
+                    rank = i + j + 1
+                    
+                    with cols[j]:
+                        # [핵심] 순서 변경: 제품명(Rank포함) -> 브랜드 -> 가격
+                        st.markdown(f"""
+                            <div class="full-card">
+                                <div class="card-image-box">
+                                    <img src="{img_url}">
+                                </div>
+                                <div class="card-text-box">
+                                    <div class="goods-name"><b>{rank}.</b> {name}</div>
+                                    <div class="brand-name">{brand}</div>
+                                    <div class="price-row">
+                                        <span>{sale:,}원</span>
+                                        <span style="color:#ff0000; font-size:12px;">{rate}%</span>
+                                    </div>
+                                    <div class="review-row">⭐ {reviews:,}</div>
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                    row_idx = i + j + 2
+                    ws.append([rank, gender, brand, name, normal, sale, rate, reviews])
+                    ws.row_dimensions[row_idx].height = 90
+                    for cell in ws[row_idx]:
+                        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                    try:
+                        img_data = BytesIO(requests.get(img_url).content)
+                        img_obj = XLImage(img_data)
+                        img_obj.width, img_obj.height = 100, 100
+                        ws.add_image(img_obj, f"I{row_idx}")
+                    except: pass
+
+        output = io.BytesIO()
+        wb.save(output)
+        st.sidebar.success("✅ 분석 완료!")
+        st.sidebar.download_button("📥 엑셀 다운로드", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
+    else:
+        st.error("데이터를 가져오지 못했습니다.")
