@@ -101,7 +101,12 @@ st.markdown("""
 st.title("📸 Musinsa Visual Market Analyzer")
 
 # 2. 공통 설정
-HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.musinsa.com/"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Referer": "https://www.musinsa.com/",
+    "Content-Type": "application/json"
+}
 GENDER_MAP = {"전체": "A", "남성": "M", "여성": "F"}
 
 BASE_SORT_OPTIONS = {
@@ -113,7 +118,7 @@ BASE_SORT_OPTIONS = {
     "할인율순 (DISCOUNT)": ("DISCOUNT_RATE", "할인순"),
 }
 
-# [함수] 숫자 포맷팅 (1.4만 등)
+# [함수 1] 숫자 포맷팅
 def format_number(num):
     if num is None: return "0"
     if num >= 10000:
@@ -122,6 +127,32 @@ def format_number(num):
         return f"{num/1000:.1f}천"
     else:
         return f"{num:,}"
+
+# [함수 2] 좋아요 API 별도 호출 (핵심 추가!)
+def get_like_counts_batch(goods_ids):
+    """
+    상품 ID 리스트를 받아 좋아요 수를 한 번에 조회하는 함수
+    """
+    if not goods_ids: return {}
+    
+    url = "https://like.musinsa.com/like/api/v2/liketypes/goods/counts"
+    
+    # 무신사 좋아요 API는 ID를 문자열 리스트로 받습니다.
+    payload = {"relationIds": [str(gid) for gid in goods_ids]}
+    
+    try:
+        resp = requests.post(url, headers=HEADERS, json=payload)
+        data = resp.json()
+        
+        # 결과 매핑: {'상품ID': 좋아요수, ...}
+        like_map = {}
+        if "data" in data and "contents" in data["data"]:
+            for item in data["data"]["contents"]:
+                like_map[str(item["relationId"])] = item["count"]
+        return like_map
+    except Exception as e:
+        # st.error(f"좋아요 조회 실패: {e}") # 디버깅용
+        return {}
 
 # 3. 사이드바
 with st.sidebar:
@@ -136,7 +167,7 @@ with st.sidebar:
     st.divider()
     
     keyword = st.text_input("검색어 (Keyword)", "원피스")
-    gender = st.radio("성별 (Target Gender)", list(GENDER_MAP.keys()), index=2) # 기본값 여성
+    gender = st.radio("성별 (Target Gender)", list(GENDER_MAP.keys()), index=2) 
     sort_label = st.selectbox("정렬 기준", list(BASE_SORT_OPTIONS.keys()))
     num_products = st.slider("수집 개수", 10, 100, 50)
 
@@ -162,6 +193,12 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
         products = []
     
     if products:
+        # [핵심 로직 추가] 1. 상품 ID만 싹 뽑아냅니다.
+        goods_ids = [p['goodsNo'] for p in products]
+        
+        # [핵심 로직 추가] 2. 좋아요 API를 따로 호출해서 맵을 만듭니다.
+        like_map = get_like_counts_batch(goods_ids)
+        
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "시장조사"
@@ -178,11 +215,14 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
                 if i + j < len(products):
                     item = products[i + j]
                     
+                    # 기본 정보
                     brand = item.get("brandKorName") or item.get("brandName", "")
                     name = item.get("goodsName", "")
                     normal = item.get("normalPrice", 0)
                     sale = item.get("price", 0)
+                    goods_id = str(item.get("goodsNo")) # ID 추출
                     
+                    # 할인율
                     if item.get("couponSaleRate"):
                         rate = item.get("couponSaleRate")
                     elif normal > sale:
@@ -193,8 +233,8 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
                     img_url = item.get("thumbnail")
                     reviews = item.get("reviewCount", 0)
                     
-                    # [핵심 수정] 좋아요 키값 다중 확인 (wishCount가 가장 유력)
-                    likes = item.get("wishCount") or item.get("likeCount") or item.get("goodsLikeCount") or 0
+                    # [중요] 아까 만든 맵에서 좋아요 수 찾기 (없으면 0)
+                    likes = like_map.get(goods_id, 0)
                     
                     rank = i + j + 1
                     
@@ -248,6 +288,6 @@ if st.button(f"🚀 분석 시작 ({gender}/{search_scope})"):
         output = io.BytesIO()
         wb.save(output)
         st.sidebar.success("✅ 분석 완료!")
-        st.sidebar.download_button("📥 엑셀 다운로드", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
+        st.sidebar.download_button("📥 엑셀 다운로드 (좋아요 포함)", output.getvalue(), f"musinsa_{keyword}_{s_short}.xlsx")
     else:
         st.warning(f"'{keyword}'에 대한 검색 결과가 없습니다.")
